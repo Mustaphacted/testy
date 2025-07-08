@@ -1,17 +1,27 @@
 from urllib.parse import quote
 
-from attachments.mixins import AttachmentViewSetMixin
-from comments.mixins import CommentViewSetMixin
-from core.apis.microsoft import get_microsoft_graph_authentication_token
-from core.mixins.audit_log_viewset_mixin import AuditLogViewSetMixin
-from core.models.models import LongRunningJob, User, Country, ACTEDArea
-from core.serializers.long_running_jobs import LongRunningJobSerializer
+import logging
+from urllib.parse import quote
+
 from django.db import transaction
 from django.db.models import QuerySet, F, Func
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _, get_language
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import mixins, viewsets, filters, status
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_access_policy import AccessPolicy, AccessViewSetMixin
+
+from attachments.mixins import AttachmentViewSetMixin
+from comments.mixins import CommentViewSetMixin
+from core.apis.microsoft import get_microsoft_graph_authentication_token
+from core.mixins.audit_log_viewset_mixin import AuditLogViewSetMixin
+from core.models.models import LongRunningJob, User, Country, ACTEDArea
+from core.serializers.long_running_jobs import LongRunningJobSerializer
 from elastic.documents import SupplierDocument
 from elastic.mixins import SearchViewSetMixin
 from finance.models import BudgetLine, FinancialSheetVersion, FinancialSheet
@@ -79,6 +89,7 @@ from logistics.serializers.supplier_user_accesses import SupplierUserAccessSeria
 from logistics.serializers.suppliers import SupplierDetailSerializer, SupplierListSerializer
 from logistics.serializers.waiver_relations import WaiverRelationSerializer
 from logistics.serializers.waivers import WaiverSerializer
+from logistics.tasks.assets_inventory_export import EXPORT_TYPE_PERIOD, EXPORT_TYPE_PROJECT
 from logistics.tasks.assets_export import export_assets
 from logistics.tasks.assets_inventory_export import export_assets_inventory, export_assets_inventories
 from logistics.tasks.assets_usages_export import export_asset_usages
@@ -86,17 +97,9 @@ from logistics.tasks.phone_lines_export import export_phone_lines
 from logistics.tasks.procurement_plan_import import import_procurement_plan
 from logistics.tasks.suppliers_export import export_suppliers
 from logistics.tasks.suppliers_import import import_suppliers
-from rest_access_policy import AccessPolicy, AccessViewSetMixin
-from rest_framework import mixins, viewsets, filters, status
-from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError, PermissionDenied
-from rest_framework.request import Request
-from rest_framework.response import Response
 from transparency.mixins import CertificationViewSetMixin
 from workflows.mixins import WorkflowViewSetMixin
 from workflows.models import Workflow
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -833,9 +836,9 @@ class InventoryViewSet(AccessViewSetMixin, WorkflowViewSetMixin, AuditLogViewSet
         project_contract_id = request.data.get('project_contract_id')
 
         # Validate the input
-        if export_type == 'period' and not (start_date and end_date):
+        if export_type == EXPORT_TYPE_PERIOD and not (start_date and end_date):
             return Response({'error': 'Missing start_date or end_date for period export.'}, status=400)
-        if export_type == 'project' and not project_contract_id:
+        if export_type == EXPORT_TYPE_PROJECT and not project_contract_id:
             return Response({'error': 'Missing project_contract_id for project export.'}, status=400)
 
         # Create the LongRunningJob

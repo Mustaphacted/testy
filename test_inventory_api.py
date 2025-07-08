@@ -292,7 +292,7 @@ def test_inventory_export_pdf(mock_export: Mock, country_fixtures, client: Clien
 
 
 @pytest.mark.django_db
-def test_export_inventory_by_period(country_fixtures, monkeypatch):
+def test_export_inventory_by_period(country_fixtures):
     premises = create_premises()
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
@@ -302,11 +302,6 @@ def test_export_inventory_by_period(country_fixtures, monkeypatch):
         date_start=date(2022, 1, 1),
         date_end=date(2022, 6, 30),
     )
-
-    def mock_inventory_to_pdf(inventory):
-        return b'Fake PDF content'
-
-    monkeypatch.setattr('logistics.tasks.assets_inventory_export._inventory_to_pdf', mock_inventory_to_pdf)
 
     from logistics.tasks.assets_inventory_export import export_inventory
 
@@ -328,7 +323,7 @@ def test_export_inventory_by_period(country_fixtures, monkeypatch):
 
 
 @pytest.mark.django_db
-def test_export_inventory_by_project(country_fixtures, monkeypatch):
+def test_export_inventory_by_project(country_fixtures):
     premises = create_premises()
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
@@ -339,11 +334,6 @@ def test_export_inventory_by_project(country_fixtures, monkeypatch):
 
     asset.current_project_contract = project_contract
     asset.save()
-
-    def mock_inventory_to_pdf(inventory):
-        return b'Fake PDF content'
-
-    monkeypatch.setattr('logistics.tasks.assets_inventory_export._inventory_to_pdf', mock_inventory_to_pdf)
 
     from logistics.tasks.assets_inventory_export import export_inventory
 

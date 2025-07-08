@@ -2,6 +2,8 @@ import logging
 import zipfile
 import os
 from datetime import date
+from django.utils.dateparse import parse_date
+from django.core.exceptions import ValidationError
 
 from django.utils import translation
 from django.db.models import QuerySet
@@ -17,6 +19,10 @@ from core.pdf import render_template, make_from_html
 from logistics.models.assets import Inventory, Asset
 
 logger = logging.getLogger(__name__)
+
+# Constants for export types
+EXPORT_TYPE_PERIOD = 'period'
+EXPORT_TYPE_PROJECT = 'project'
 
 
 @app.task
@@ -58,32 +64,36 @@ def _inventory_to_pdf(inventory: Inventory) -> bytes:
     return make_from_html(html)
 
 
-def get_assets_by_period(start_date, end_date) -> QuerySet:
-    from django.utils.dateparse import parse_date
-    from django.core.exceptions import ValidationError
+def get_assets_by_period(date_start, date_end) -> QuerySet:
+    """
+    Get assets from inventories that ended within the specified date range.
+    
+    Args:
+        date_start: Start date for the period filter
+        date_end: End date for the period filter
+        
+    Returns:
+        QuerySet of Asset objects from inventories that ended in the specified period
+        
+    Raises:
+        ValidationError: When only inventories in progress exist in the period
+    """
 
     # Convert string dates to date objects if needed
-    if isinstance(start_date, str):
-        start_date = parse_date(start_date)
-    if isinstance(end_date, str):
-        end_date = parse_date(end_date)
+    if isinstance(date_start, str):
+        date_start = parse_date(date_start)
+    if isinstance(date_end, str):
+        date_end = parse_date(date_end)
 
     # Get inventories with end date in the range
     inventories_with_end = Inventory.objects.filter(
         date_end__isnull=False,
-        date_end__gte=start_date,
-        date_end__lte=end_date,
+        date_end__gte=date_start,
+        date_end__lte=date_end,
     )
 
-    # If we don't find any inventories with end date, check if there are only inventories without end date
+    # If no completed inventories found, return empty queryset
     if not inventories_with_end.exists():
-        inventories_without_end = Inventory.objects.filter(
-            date_start__lte=end_date,
-            date_end__isnull=True,
-        )
-
-        if inventories_without_end.exists():
-            raise ValidationError('Only inventories in progress in the specified period')
         return Asset.objects.none()
 
     # Get all assets linked to these inventories
@@ -95,6 +105,19 @@ def get_assets_by_period(start_date, end_date) -> QuerySet:
 
 
 def get_assets_by_project(project_contract_id: int) -> QuerySet:
+    """
+    Get assets currently allocated to a specific project.
+    
+    Note: This returns assets currently allocated to the project.
+    Assets that were previously allocated but later reallocated to other projects
+    will not be included in the results.
+    
+    Args:
+        project_contract_id: ID of the project contract
+        
+    Returns:
+        QuerySet of Asset objects currently allocated to the project
+    """
     return Asset.objects.filter(current_project_contract_id=project_contract_id)
 
 
@@ -144,14 +167,29 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None) -> s
 
 
 def export_inventory(export_type, start_date=None, end_date=None, project_contract_id=None) -> str:
-    if export_type == 'period':
+    """
+    Export inventory data based on the specified criteria.
+    
+    Args:
+        export_type: Type of export ('period' or 'project')
+        start_date: Start date for period export
+        end_date: End date for period export
+        project_contract_id: Project contract ID for project export
+        
+    Returns:
+        Path to the generated ZIP file
+        
+    Raises:
+        ValueError: When export_type is invalid or required parameters are missing
+    """
+    if export_type == EXPORT_TYPE_PERIOD:
         assets = get_assets_by_period(start_date, end_date)
         if project_contract_id:
             assets = assets.filter(current_project_contract_id=project_contract_id)
-    elif export_type == 'project':
+    elif export_type == EXPORT_TYPE_PROJECT:
         assets = get_assets_by_project(project_contract_id)
     else:
-        raise ValueError("Invalid export type: choose either 'period' or 'project'.")
+        raise ValueError(f"Invalid export type: choose either '{EXPORT_TYPE_PERIOD}' or '{EXPORT_TYPE_PROJECT}'.")
 
     return create_zip_with_inventories(assets)
 
