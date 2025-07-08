@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+    <%page args='inventory, inventory_asset_relations=None' />
+    <%
+        from babel.dates import format_date
+        from core.utilities import rgetattr
+
+        from logistics.models.assets import Asset
+    %>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; Charset=utf-8">
+        <style>
+            @page {
+                size: A4 landscape;
+                margin: 1cm;
+                padding-top: 10pt;
+                color: #000000;
+                background-color: #ffffff;
+                font-family: Arial, sans-serif;
+                font-size: 8pt;
+
+                @bottom-left {
+                    content: "Asset Inventory : ${inventory.premises.place.name | h} (${(format_date(inventory.validated_at, format="long", locale="en")) if inventory.validated_at else ''})";
+                }
+                @bottom-right {
+                    content: "Page " counter(page) " of " counter(pages);
+                }
+            }
+
+            body {
+                font-family: Arial, sans-serif;
+                font-size: 10pt;
+                color: #000000;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            table {
+                border-collapse: collapse;
+            }
+
+            .logo {
+                float: left;
+            }
+            .logo img {
+                width: 150px;
+            }
+
+            .document-type {
+                color: #888;
+                text-align: right;
+            }
+
+            .title {
+                background-color: #ccc;
+                font-size: 18pt;
+                font-weight: bold;
+                text-align: center;
+                text-transform: uppercase;
+                margin-top: 1cm;
+                margin-bottom: 0.5cm;
+            }
+
+            .wide-table {
+                width: 100%;
+                font-size: 16pt;
+            }
+
+            .wide-table th {
+                font-weight: bold;
+                padding: 0.2cm;
+                text-align: center;
+            }
+            .wide-table td {
+                padding: 0.2cm;
+                text-align: center;
+            }
+
+            .items {
+                margin-top: 0.5cm;
+                width: 100%;
+            }
+            .items th {
+                background-color: #ccc;
+                font-weight: bold;
+                padding: 0.2cm;
+                border-left: 0.5px solid black;
+                border-right: 0.5px solid black;
+            }
+            .items td {
+                padding: 0.2cm;
+            }
+            .process-text {
+                margin-top: 1rem;
+                font-size: 0.9em;
+                color: #555555;
+            }
+            .footer {
+                margin-top: 1cm;
+                width: 100%;
+            }
+            .footer td {
+                width: 33%;
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <div class="logo">
+                <img src="sys://security/pdf_templates/logo-acted-blue.svg" />
+            </div>
+            <div class="document-type">
+                LOGISTICS<br/>
+                AST-07<br/>
+                Version 2025-01<br/>
+            </div>
+        </header>
+        <div class="content">
+            <div class="title">
+                Asset Inventory
+                ${('- ' + format_date(inventory.date_end, format="long", locale="en")) if inventory.date_end else '' }
+            </div>
+            <section>
+                <table class="wide-table">
+                    <tr>
+                        <th>Place</th>
+                        <th>${inventory.premises.place.name | h}</th>
+
+                    </tr>
+                    <tr>
+                        <td>Premise ${inventory.premises.code | h}</td>
+                        <td>${inventory.premises.address | h}</td>
+                    </tr>
+                </table>
+            </section>
+            <section>
+                <i>Inventory: <a href="${inventory.get_url()}">${inventory.code | h}</a></i>
+                <table class="items">
+                    <tr>
+                        <th>Asset code</th>
+                        <th>Model</th>
+                        <th>Condition</th>
+                        <th>Room</th>
+                        <th>Project</th>
+                        <th>Associated user</th>
+                        <th>Presence</th>
+                        <th>Comments</th>
+                    </tr>
+                        % for index, relation in enumerate(inventory_asset_relations if inventory_asset_relations else inventory.inventory_asset_relations.order_by('id').all()):
+                        <tr>
+                            <td><a href="${relation.asset.get_url()}">${relation.asset.code | h}</a></td>
+                            <td>${relation.asset.model}</td>
+                            <td>${Asset.condition_label_lookup.get(relation.condition, {}).get('label_en', relation.condition) | h}</td>
+                            <td>${rgetattr(relation.room, 'name', '')}</td>
+                            <td>${rgetattr(relation.asset.current_project_contract, 'code_project', '')}</td>
+                            <td>
+                                ${rgetattr(relation.asset.current_staff, 'given_name', '')}
+                                ${rgetattr(relation.asset.current_staff, 'surname', '')}
+                            </td>
+                            <td>${relation.presence or ''}</td>
+                            <td>${relation.comments or ''}</td>
+                        </tr>
+                    % endfor
+                </table>
+            </section>
+            <section class="text-1">
+                <h1>
+                    Inventory process
+                </h1>
+                <p>
+                    Inventory created by : ${rgetattr(inventory.created_by, 'email', '')}<br/>
+                    Inventory validated by : ${rgetattr(inventory.validated_by, 'email', '')}<br/>
+                </p>
+            </section>
+            <section>
+                <table class="wide-table">
+                    <tr>
+                        <th>Logistics officer:</th>
+                        <th>Coordination:</th>
+                    </tr>
+                    <tr>
+                        <td>
+                            ${rgetattr(inventory.created_by, 'email', '')}<br/>
+                            (digitally signed in Core ${(format_date(inventory.created_at, format="long", locale="en"))})
+                        </td>
+                        <td>
+                            ${rgetattr(inventory.validated_by, 'email', '')}<br/>
+                            (digitally signed in Core ${(format_date(inventory.validated_at, format="long", locale="en")) if inventory.validated_at else ''})
+                        </td>
+                    </tr>
+                </table>
+            </section>
+            <section>
+                <div class="process-text">
+                    The inventory process has been created and confirmed through Acted's internal platform Core,
+                    exclusively available to Acted staff.<br/>
+
+                    Acted Core is secured by multifactor authentication and a guaranteed-complex password.<br/>
+                    The coordination has the choice between confirming or rejecting this inventory.<br/>
+                    This document is only available once the inventory has been validated.<br/>
+                </div>
+            </section>
+        </div>
+    </body>
+</html>
