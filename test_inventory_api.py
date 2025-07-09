@@ -394,6 +394,7 @@ def test_get_assets_by_period(country_fixtures):
 def test_get_assets_by_project(country_fixtures):
     """Test the get_assets_by_project function."""
     from logistics.tasks.assets_inventory_export import get_assets_by_project
+    from logistics.models.assets import AssetAllocationProjectContract
     
     project_contract = create_project_contract()
     asset1 = create_asset()
@@ -402,6 +403,13 @@ def test_get_assets_by_project(country_fixtures):
     # Set current project for asset1
     asset1.current_project_contract = project_contract
     asset1.save()
+    
+    # Create historical allocation for asset1
+    AssetAllocationProjectContract.objects.create(
+        asset=asset1,
+        project_contract=project_contract,
+        date_start=date(2022, 1, 1)
+    )
     
     # Test getting currently allocated assets
     assets = get_assets_by_project(project_contract.id, include_historical=False)

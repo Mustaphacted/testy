@@ -204,14 +204,14 @@ def export_inventory(export_type, date_start=None, date_end=None, project_contra
     Raises:
         ValueError: When export_type is invalid or required parameters are missing
     """
-    if export_type == EXPORT_TYPE_PERIOD:
+    if export_type == 'period':
         assets = get_assets_by_period(date_start, date_end)
         if project_contract_id:
             assets = assets.filter(current_project_contract_id=project_contract_id)
-    elif export_type == EXPORT_TYPE_PROJECT:
+    elif export_type == 'project':
         assets = get_assets_by_project(project_contract_id)
     else:
-        raise ValueError(f"Invalid export type: choose either '{EXPORT_TYPE_PERIOD}' or '{EXPORT_TYPE_PROJECT}'.")
+        raise ValueError(f"Invalid export type: choose either 'period' or 'project'.")
 
     return create_zip_with_inventories(assets, project_contract_id=project_contract_id)
 
@@ -224,8 +224,8 @@ def export_assets_inventories(job_id: int) -> None:
 
     try:
         export_type = job.detail.get('type')
-        date_start = job.detail.get('start_date')
-        date_end = job.detail.get('end_date')
+        date_start = job.detail.get('start_date') or job.detail.get('date_start')
+        date_end = job.detail.get('end_date') or job.detail.get('date_end')
         project_contract_id = job.detail.get('current_project_contract_id')
 
         zip_path = export_inventory(
