@@ -308,8 +308,8 @@ def test_export_inventory_by_period(country_fixtures):
 
     zip_file_path = export_inventory(
         export_type='period',
-        start_date=date(2022, 1, 1),
-        end_date=date(2022, 6, 30),
+        date_start=date(2022, 1, 1),
+        date_end=date(2022, 6, 30),
     )
 
     assert os.path.exists(zip_file_path)
@@ -426,8 +426,8 @@ def test_export_inventory_error_handling(country_fixtures):
     with pytest.raises(Exception, match="No inventories found"):
         export_inventory(
             export_type='period',
-            start_date=date(2025, 1, 1),
-            end_date=date(2025, 12, 31)
+            date_start=date(2025, 1, 1),
+            date_end=date(2025, 12, 31)
         )
     
     # Test project export with non-existent project
