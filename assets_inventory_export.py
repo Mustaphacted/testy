@@ -1,6 +1,7 @@
 import logging
 import zipfile
 import os
+import tempfile
 from datetime import date
 from django.utils.dateparse import parse_date
 from django.core.exceptions import ValidationError
@@ -113,21 +114,109 @@ def get_assets_by_period(date_start, date_end) -> QuerySet:
     return assets
 
 
-def get_assets_by_project(project_contract_id: int) -> QuerySet:
+def get_assets_by_project(project_contract_id: int, include_historical: bool = True) -> QuerySet:
     """
-    Get assets currently allocated to a specific project.
-    
-    Note: This returns assets currently allocated to the project.
-    Assets that were previously allocated but later reallocated to other projects
-    will not be included in the results.
-    
+    Get assets allocated to a specific project.
+
     Args:
-        project_contract_id: ID of the project contract
-        
+        project_contract_id: The ID of the project contract
+        include_historical: If True, include assets that were previously allocated to this project
+                           but may now be allocated elsewhere
+
     Returns:
-        QuerySet of Asset objects currently allocated to the project
+        QuerySet of Asset objects associated with the project
     """
-    return Asset.objects.filter(current_project_contract_id=project_contract_id)
+    if include_historical:
+        # Get all assets that have ever been allocated to this project
+        from logistics.models.assets import AssetAllocationProjectContract
+        asset_ids = AssetAllocationProjectContract.objects.filter(
+            project_contract_id=project_contract_id
+        ).values_list('asset_id', flat=True).distinct()
+        return Asset.objects.filter(id__in=asset_ids)
+    else:
+        # Get only assets currently allocated to this project
+        return Asset.objects.filter(current_project_contract_id=project_contract_id)
+
+
+def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, output_path=None) -> str:
+    pdf_files = []
+    processed_inventory_ids = set()
+
+    asset_relations_query = InventoryAssetRelation.objects.filter(asset__in=assets)
+    if project_contract_id:
+        asset_relations_query = asset_relations_query.filter(asset__current_project_contract_id=project_contract_id)
+
+    inventories = Inventory.objects.filter(
+        inventory_asset_relations__asset__in=assets,
+    ).prefetch_related(
+        Prefetch(
+            'inventory_asset_relations',
+            queryset=asset_relations_query,
+            to_attr='filtered_relations',
+        ),
+    ).distinct()
+
+    if not inventories:
+        raise Exception('No inventories found for the selected criteria.')
+
+    for inventory in inventories:
+        if inventory.id in processed_inventory_ids:
+            continue
+
+        processed_inventory_ids.add(inventory.id)
+        pdf_data = _inventory_to_pdf(inventory)
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+            temp_file.write(pdf_data)
+            temp_file.flush()
+            pdf_files.append(temp_file.name)
+
+    if not pdf_files:
+        raise Exception('No PDF inventory to export for selected criteria.')
+
+    with zipfile.ZipFile(output_path, 'w') as zip_file:
+        for pdf_file in pdf_files:
+            zip_file.write(pdf_file, os.path.basename(pdf_file))
+
+    for pdf_file in pdf_files:
+        os.remove(pdf_file)
+
+    return output_path
+
+
+def export_inventory(export_type, start_date=None, end_date=None, project_contract_id=None) -> str:
+    """
+     Export inventory data based on the specified criteria.
+     Args:
+         export_type: Type of export ('period' or 'project')
+         start_date: Start date for period export
+         end_date: End date for period export
+         project_contract_id: Project contract ID for project export
+
+     Returns:
+         Path to the generated ZIP file
+     """
+    temp_file = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
+    try:
+        if export_type == 'period':
+            assets = get_assets_by_period(start_date, end_date)
+            if project_contract_id:
+                assets = assets.filter(current_project_contract_id=project_contract_id)
+        elif export_type == 'project':
+            assets = get_assets_by_project(project_contract_id)
+        else:
+            raise ValueError("Invalid export type: choose either 'period' or 'project'.")
+
+        # Create zip file using the temporary file
+        zip_path = create_zip_with_inventories(assets, project_contract_id=project_contract_id,
+                                               output_path=temp_file.name)
+        return zip_path
+
+    except Exception:
+        # Make sure to clean up the temporary file if something goes wrong
+        if os.path.exists(temp_file.name):
+            os.unlink(temp_file.name)
+        raise
 
 
 def create_zip_with_inventories(assets: QuerySet, project_contract_id=None) -> str:
@@ -175,14 +264,14 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None) -> s
     return zip_filename
 
 
-def export_inventory(export_type, start_date=None, end_date=None, project_contract_id=None) -> str:
+def export_inventory(export_type, date_start=None, date_end=None, project_contract_id=None) -> str:
     """
     Export inventory data based on the specified criteria.
     
     Args:
         export_type: Type of export ('period' or 'project')
-        start_date: Start date for period export
-        end_date: End date for period export
+        date_start: Start date for period export
+        date_end: End date for period export
         project_contract_id: Project contract ID for project export
         
     Returns:
@@ -192,7 +281,7 @@ def export_inventory(export_type, start_date=None, end_date=None, project_contra
         ValueError: When export_type is invalid or required parameters are missing
     """
     if export_type == EXPORT_TYPE_PERIOD:
-        assets = get_assets_by_period(start_date, end_date)
+        assets = get_assets_by_period(date_start, date_end)
         if project_contract_id:
             assets = assets.filter(current_project_contract_id=project_contract_id)
     elif export_type == EXPORT_TYPE_PROJECT:
@@ -205,7 +294,6 @@ def export_inventory(export_type, start_date=None, end_date=None, project_contra
 
 @app.task
 def export_assets_inventories(job_id: int) -> None:
-    # Retrieve the LongRunningJob instance from the database
     job = LongRunningJob.objects.get(id=job_id)
     locale = job.detail.get('locale', 'en')
     translation.activate(locale)
@@ -216,18 +304,19 @@ def export_assets_inventories(job_id: int) -> None:
         end_date = job.detail.get('end_date')
         project_contract_id = job.detail.get('current_project_contract_id')
 
-        zip_file_path = export_inventory(
+        zip_path = export_inventory(
             export_type=export_type,
             start_date=start_date,
             end_date=end_date,
-            project_contract_id=project_contract_id,
+            project_contract_id=project_contract_id
         )
 
-        # Attach the ZIP file to the job
-        with open(zip_file_path, 'rb') as zip_file:
+        with open(zip_path, 'rb') as temp_file:
             attachment = job.attach(
-                'inventories_export.zip', zip_file.read(), created_by=get_current_user(),
+                'inventories_export.zip', temp_file.read(), created_by=job.created_by,
             )
+
+        os.remove(zip_path)
 
         job.status = LongRunningJob.Status.DONE
         job.progress = 100
@@ -241,4 +330,4 @@ def export_assets_inventories(job_id: int) -> None:
 
     finally:
         job.save()
-        deactivate()
+        translation.deactivate()
