@@ -330,12 +330,13 @@ def test_export_inventory_by_project(country_fixtures):
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
 
-    inventory = create_inventory(premises=premises)
-
     project_contract = create_project_contract()
 
     asset.current_project_contract = project_contract
     asset.save()
+    
+    # Create inventory for the premises where the asset is located
+    inventory = create_inventory(premises=premises)
 
     from logistics.tasks.assets_inventory_export import export_inventory
 
