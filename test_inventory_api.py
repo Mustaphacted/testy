@@ -331,6 +331,16 @@ def test_export_inventory_by_project(country_fixtures):
     create_asset_allocation_premises(asset=asset, premises=premises)
 
     project_contract = create_project_contract()
+    
+    # Create historical allocation for the asset to the project
+    from logistics.models.assets import AssetAllocationProjectContract
+    AssetAllocationProjectContract.objects.create(
+        asset=asset,
+        project_contract=project_contract,
+        date_start=date(2022, 1, 1),
+        owner_type='project',
+        condition=asset.condition
+    )
 
     asset.current_project_contract = project_contract
     asset.save()
@@ -408,7 +418,9 @@ def test_get_assets_by_project(country_fixtures):
     AssetAllocationProjectContract.objects.create(
         asset=asset1,
         project_contract=project_contract,
-        date_start=date(2022, 1, 1)
+        date_start=date(2022, 1, 1),
+        owner_type='project',  # Add required field
+        condition=asset1.condition  # Add required field
     )
     
     # Test getting currently allocated assets
