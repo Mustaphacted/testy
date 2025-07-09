@@ -51,6 +51,15 @@ def export_assets_inventory(job_id: int) -> None:
 
 def _inventory_to_pdf(inventory: Inventory) -> bytes:
     locale = translation.get_language()
+    
+    # Normalize locale to match available templates
+    # Convert 'en-us' to 'en', 'fr-fr' to 'fr', etc.
+    if locale and '-' in locale:
+        locale = locale.split('-')[0]
+    
+    # Default to 'en' if locale is not set or not supported
+    if not locale or locale not in ['en', 'fr']:
+        locale = 'en'
 
     # use filtered relations if it exist
     relations = getattr(inventory, 'filtered_relations', None) or inventory.inventory_asset_relations.all()
