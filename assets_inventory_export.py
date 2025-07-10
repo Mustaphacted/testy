@@ -59,6 +59,15 @@ def _inventory_to_pdf(inventory: Inventory) -> bytes:
         locale = locale.split('-')[0]
     
     # Default to 'en' if locale is not set or not supported
+    if not locale or locale not in ['en', 'fr']:
+        locale = 'en'
+    
+    # Normalize locale to match available templates
+    # Convert 'en-us' to 'en', 'fr-fr' to 'fr', etc.
+    if locale and '-' in locale:
+        locale = locale.split('-')[0]
+    
+    # Default to 'en' if locale is not set or not supported
     # Also handle test environment where locale might be None
     if not locale or locale not in ['en', 'fr']:
         locale = 'en'
