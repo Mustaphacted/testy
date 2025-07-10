@@ -8,6 +8,7 @@ from unittest import mock
 from unittest.mock import Mock
 
 import pytest
+from django.utils import timezone
 from django.test import Client
 from freezegun import freeze_time
 from pypdf import PdfReader
@@ -298,63 +299,74 @@ def test_export_inventory_by_period(country_fixtures):
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
 
+    # Make sure the asset's current_premises is set
+    asset.current_premises = premises
+    asset.save()
+
     inventory = create_inventory(
         premises=premises,
         date_start=date(2022, 1, 1),
         date_end=date(2022, 6, 30),
     )
 
+    # Ensure the inventory has the asset relation
+    from logistics.models.assets import InventoryAssetRelation
+    if not InventoryAssetRelation.objects.filter(inventory=inventory, asset=asset).exists():
+        InventoryAssetRelation.objects.create(
+            inventory=inventory,
+            asset=asset,
+            condition=asset.condition  # Use asset's current condition
+        )
+
     from logistics.tasks.assets_inventory_export import export_inventory
 
-    zip_file_path = export_inventory(
-        export_type='period',
-        date_start=date(2022, 1, 1),
-        date_end=date(2022, 6, 30),
-    )
+    # Force locale to 'en' for the test
+    from django.utils import translation
+    with translation.override('en'):
+        zip_file_path = export_inventory(
+            export_type='period',
+            date_start=date(2022, 1, 1),
+            date_end=date(2022, 6, 30),
+        )
 
-    assert os.path.exists(zip_file_path)
-    assert os.path.getsize(zip_file_path) > 0
+        assert os.path.exists(zip_file_path)
+        assert os.path.getsize(zip_file_path) > 0
 
-    with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
-        file_list = zip_file.namelist()
-        assert len(file_list) >= 1
-        # Check that at least one PDF file exists in the zip
-        assert any(file.endswith('.pdf') for file in file_list)
+        with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
+            file_list = zip_file.namelist()
+            assert len(file_list) >= 1
+            # Check that at least one PDF file exists in the zip
+            assert any(file.endswith('.pdf') for file in file_list)
 
-    os.remove(zip_file_path)
-
+        os.remove(zip_file_path)
 
 @pytest.mark.django_db
 def test_export_inventory_by_project(country_fixtures):
-    premises = create_premises()
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
-
-    project_contract = create_project_contract()
-
-    asset.current_project_contract = project_contract
-    asset.save()
-    
+    create_asset_allocation_premises(asset=asset, premises=premises)
     # Create inventory for the premises where the asset is located
     inventory = create_inventory(premises=premises)
 
-    from logistics.tasks.assets_inventory_export import export_inventory
+    # Ensure the inventory has the asset relation
+    # Force locale to 'en' for the test
+    from django.utils import translation
+    with translation.override('en'):
+        zip_file_path = export_inventory(
+            export_type='project',
+            project_contract_id=project_contract.id,
+        )
 
-    zip_file_path = export_inventory(
-        export_type='project',
-        project_contract_id=project_contract.id,
-    )
+        assert os.path.exists(zip_file_path)
+        assert os.path.getsize(zip_file_path) > 0
 
-    assert os.path.exists(zip_file_path)
-    assert os.path.getsize(zip_file_path) > 0
+        with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
+            file_list = zip_file.namelist()
+            assert len(file_list) >= 1
+            # Check that at least one PDF file exists in the zip
+            assert any(file.endswith('.pdf') for file in file_list)
 
-    with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
-        file_list = zip_file.namelist()
-        assert len(file_list) >= 1
-        # Check that at least one PDF file exists in the zip
-        assert any(file.endswith('.pdf') for file in file_list)
-
-    os.remove(zip_file_path)
+        os.remove(zip_file_path)
 
 
 @pytest.mark.django_db
@@ -368,12 +380,28 @@ def test_get_assets_by_period(country_fixtures):
     create_asset_allocation_premises(asset=asset1, premises=premises)
     create_asset_allocation_premises(asset=asset2, premises=premises)
     
+    # Make sure assets have current_premises set
+    asset1.current_premises = premises
+    asset1.save()
+    asset2.current_premises = premises
+    asset2.save()
+    
     # Create inventory that ended within the period
     inventory1 = create_inventory(
         premises=premises,
         date_start=date(2022, 1, 1),
         date_end=date(2022, 6, 30),
     )
+    
+    # Ensure inventory has asset relations
+    from logistics.models.assets import InventoryAssetRelation
+    for asset in [asset1, asset2]:
+        if not InventoryAssetRelation.objects.filter(inventory=inventory1, asset=asset).exists():
+            InventoryAssetRelation.objects.create(
+                inventory=inventory1,
+                asset=asset,
+                condition=asset.condition
+            )
     
     # Test with date objects
     assets = get_assets_by_period(date(2022, 1, 1), date(2022, 12, 31))
@@ -408,15 +436,9 @@ def test_get_assets_by_project(country_fixtures):
     # The function should still work with include_historical=False
     
     # Test getting currently allocated assets
-    assets = get_assets_by_project(project_contract.id, include_historical=False)
+            condition=asset.condition
     assert asset1 in assets
     assert asset2 not in assets
-    
-
-
-@pytest.mark.django_db
-def test_export_inventory_error_handling(country_fixtures):
-    """Test error handling in export_inventory function."""
     from logistics.tasks.assets_inventory_export import export_inventory
     
     # Test invalid export type
