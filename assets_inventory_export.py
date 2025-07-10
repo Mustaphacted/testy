@@ -152,8 +152,6 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
     processed_inventory_ids = set()
 
     asset_relations_query = InventoryAssetRelation.objects.filter(asset__in=assets)
-    if project_contract_id:
-        asset_relations_query = asset_relations_query.filter(asset__current_project_contract_id=project_contract_id)
 
     inventories = Inventory.objects.filter(
         inventory_asset_relations__asset__in=assets,
@@ -173,6 +171,14 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
             continue
 
         processed_inventory_ids.add(inventory.id)
+        
+        # If we're filtering by project, only include relations for assets in that project
+        if project_contract_id and hasattr(inventory, 'filtered_relations'):
+            inventory.filtered_relations = [
+                rel for rel in inventory.filtered_relations 
+                if rel.asset.current_project_contract_id == project_contract_id
+            ]
+        
         pdf_data = _inventory_to_pdf(inventory)
 
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
