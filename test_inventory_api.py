@@ -353,6 +353,14 @@ def test_export_inventory_by_project(country_fixtures):
     asset.current_premises = premises
     asset.save()
     
+    # Create AssetAllocationProjectContract record for historical tracking
+    from logistics.models.assets import AssetAllocationProjectContract
+    AssetAllocationProjectContract.objects.create(
+        asset=asset,
+        project_contract=project_contract,
+        start_date=timezone.now().date()
+    )
+    
     # Create inventory for the premises where the asset is located
     inventory = create_inventory(premises=premises)
 
