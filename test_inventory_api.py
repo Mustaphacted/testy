@@ -454,11 +454,34 @@ def test_get_assets_by_project(country_fixtures):
     # The function should still work with include_historical=False
     
     # Test getting currently allocated assets
-            condition=asset.condition
+    assets = get_assets_by_project(project_contract.id, include_historical=False)
     assert asset1 in assets
     assert asset2 not in assets
+
+
+@pytest.mark.django_db
+def test_export_inventory_error_handling(country_fixtures):
+    """Test error handling in export_inventory function."""
     from logistics.tasks.assets_inventory_export import export_inventory
     
+    # Test invalid export type
+    with pytest.raises(ValueError, match="Invalid export type"):
+        export_inventory(export_type='invalid')
+    
+    # Test period export with no inventories
+    with pytest.raises(Exception, match="No inventories found"):
+        export_inventory(
+            export_type='period',
+            date_start=date(2025, 1, 1),
+            date_end=date(2025, 12, 31)
+        )
+    
+    # Test project export with non-existent project
+    with pytest.raises(Exception, match="No inventories found"):
+        export_inventory(
+            export_type='project',
+            project_contract_id=99999
+        )
     # Test invalid export type
     with pytest.raises(ValueError, match="Invalid export type"):
         export_inventory(export_type='invalid')
