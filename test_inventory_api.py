@@ -373,6 +373,17 @@ def test_export_inventory_by_project(country_fixtures):
             condition=asset.condition
         )
 
+    # Debug: Check if assets are found by get_assets_by_project
+    from logistics.tasks.assets_inventory_export import get_assets_by_project
+    assets = get_assets_by_project(project_contract.id)
+    assert asset in assets, f"Asset {asset.code} not found in project assets"
+    
+    # Debug: Check if inventories are found
+    from logistics.models.assets import Inventory
+    inventories = Inventory.objects.filter(
+        inventory_asset_relations__asset__in=assets,
+    ).distinct()
+    assert inventories.exists(), f"No inventories found for assets: {[a.code for a in assets]}"
     from logistics.tasks.assets_inventory_export import export_inventory
 
     # Force locale to 'en' for the test
@@ -454,12 +465,21 @@ def test_get_assets_by_project(country_fixtures):
     asset1 = create_asset()
     asset2 = create_asset()
     
-    # Set current project for asset1
+    # Create historical allocation for asset1
+    AssetAllocationProjectContract.objects.create(
+        asset=asset1,
+        project_contract=project_contract,
+        start_date=timezone.now().date()
+    )
+    
+    # Also set current project for asset1
     asset1.current_project_contract = project_contract
     asset1.save()
     
-    # For now, let's test only with current allocations since we have issues with historical ones
-    # The function should still work with include_historical=False
+    # Test getting assets with historical allocations (default behavior)
+    assets = get_assets_by_project(project_contract.id)
+    assert asset1 in assets
+    assert asset2 not in assets
     
     # Test getting currently allocated assets
     assets = get_assets_by_project(project_contract.id, include_historical=False)
