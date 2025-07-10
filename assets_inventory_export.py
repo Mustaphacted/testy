@@ -8,6 +8,7 @@ from django.utils.dateparse import parse_date
 
 from django.utils import translation
 from django.db.models import QuerySet
+from django.db import models
 from django.db.models.query import Prefetch
 from logistics.models.assets import InventoryAssetRelation
 
@@ -118,7 +119,17 @@ def get_assets_by_project(project_contract_id: int, include_historical: bool = T
         asset_ids = AssetAllocationProjectContract.objects.filter(
             project_contract_id=project_contract_id,
         ).values_list('asset_id', flat=True).distinct()
-        return Asset.objects.filter(id__in=asset_ids)
+        
+        # Also get assets currently allocated to this project
+        current_assets = Asset.objects.filter(current_project_contract_id=project_contract_id)
+        
+        # Combine both historical and current assets
+        if asset_ids:
+            return Asset.objects.filter(
+                models.Q(id__in=asset_ids) | models.Q(current_project_contract_id=project_contract_id)
+            ).distinct()
+        else:
+            return current_assets
     else:
         # Get only assets currently allocated to this project
         return Asset.objects.filter(current_project_contract_id=project_contract_id)
