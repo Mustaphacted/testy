@@ -2,9 +2,9 @@ import logging
 import zipfile
 import os
 import tempfile
-
 from datetime import date
 from django.utils.dateparse import parse_date
+from django.core.exceptions import ValidationError
 
 from django.utils import translation
 from django.db.models import QuerySet
@@ -20,6 +20,10 @@ from core.pdf import render_template, make_from_html
 from logistics.models.assets import Inventory, Asset
 
 logger = logging.getLogger(__name__)
+
+# Constants for export types
+EXPORT_TYPE_PERIOD = 'period'
+EXPORT_TYPE_PROJECT = 'project'
 
 
 @app.task
@@ -48,6 +52,15 @@ def export_assets_inventory(job_id: int) -> None:
 
 def _inventory_to_pdf(inventory: Inventory) -> bytes:
     locale = translation.get_language()
+    
+    # Normalize locale to match available templates
+    # Convert 'en-us' to 'en', 'fr-fr' to 'fr', etc.
+    if locale and '-' in locale:
+        locale = locale.split('-')[0]
+    
+    # Default to 'en' if locale is not set or not supported
+    if not locale or locale not in ['en', 'fr']:
+        locale = 'en'
 
     # use filtered relations if it exist
     relations = getattr(inventory, 'filtered_relations', None) or inventory.inventory_asset_relations.all()
@@ -64,14 +77,14 @@ def _inventory_to_pdf(inventory: Inventory) -> bytes:
 def get_assets_by_period(date_start, date_end) -> QuerySet:
     """
     Get assets from inventories that ended within the specified date range.
-
+    
     Args:
         date_start: Start date for the period filter
         date_end: End date for the period filter
-
+        
     Returns:
         QuerySet of Asset objects from inventories that ended in the specified period
-
+        
     Raises:
         ValidationError: When only inventories in progress exist in the period
     """
@@ -188,16 +201,16 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
 def export_inventory(export_type, date_start=None, date_end=None, project_contract_id=None) -> str:
     """
     Export inventory data based on the specified criteria.
-
+    
     Args:
         export_type: Type of export ('period' or 'project')
         date_start: Start date for period export
         date_end: End date for period export
         project_contract_id: Project contract ID for project export
-
+        
     Returns:
         Path to the generated ZIP file
-
+        
     Raises:
         ValueError: When export_type is invalid or required parameters are missing
     """
@@ -208,28 +221,13 @@ def export_inventory(export_type, date_start=None, date_end=None, project_contra
     elif export_type == 'project':
         assets = get_assets_by_project(project_contract_id)
     else:
-        raise ValueError("Invalid export type: choose either 'period' or 'project'.")
+        raise ValueError(f"Invalid export type: choose either 'period' or 'project'.")
 
     return create_zip_with_inventories(assets, project_contract_id=project_contract_id)
 
 
 @app.task
 def export_assets_inventories(job_id: int) -> None:
-    """
-       Asynchronous task to export asset inventories to a ZIP file.
-
-       This function processes a long-running job to generate an inventory export based on
-       different criteria (period-based or project-based). The export is packaged as a ZIP
-       file and attached to the job for download.
-
-       The job detail should contain:
-           - type: Export type ('period' or 'project')
-           - start_date/date_start: Start date for period exports
-           - end_date/date_end: End date for period exports
-           - current_project_contract_id: Project contract ID for project exports
-           - locale: Language locale for the export (defaults to 'en')
-       """
-
     job = LongRunningJob.objects.get(id=job_id)
     locale = job.detail.get('locale', 'en')
     translation.activate(locale)
@@ -244,7 +242,7 @@ def export_assets_inventories(job_id: int) -> None:
             export_type=export_type,
             date_start=date_start,
             date_end=date_end,
-            project_contract_id=project_contract_id,
+            project_contract_id=project_contract_id
         )
 
         with open(zip_path, 'rb') as temp_file:
