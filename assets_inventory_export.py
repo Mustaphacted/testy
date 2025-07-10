@@ -128,19 +128,34 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
     pdf_files = []
     processed_inventory_ids = set()
 
-    asset_relations_query = InventoryAssetRelation.objects.filter(asset__in=assets)
-    if project_contract_id:
-        asset_relations_query = asset_relations_query.filter(asset__current_project_contract_id=project_contract_id)
-
+    # Get all inventories that contain any of the specified assets
     inventories = Inventory.objects.filter(
         inventory_asset_relations__asset__in=assets,
-    ).prefetch_related(
-        Prefetch(
-            'inventory_asset_relations',
-            queryset=asset_relations_query,
-            to_attr='filtered_relations',
-        ),
     ).distinct()
+
+    # If we're filtering by project, we'll filter the relations later
+    if project_contract_id:
+        # Prefetch only the relations for assets in the specified project
+        asset_relations_query = InventoryAssetRelation.objects.filter(
+            asset__in=assets
+        )
+        inventories = inventories.prefetch_related(
+            Prefetch(
+                'inventory_asset_relations',
+                queryset=asset_relations_query,
+                to_attr='filtered_relations',
+            ),
+        )
+    else:
+        # For non-project exports, include all relations for the specified assets
+        asset_relations_query = InventoryAssetRelation.objects.filter(asset__in=assets)
+        inventories = inventories.prefetch_related(
+            Prefetch(
+                'inventory_asset_relations',
+                queryset=asset_relations_query,
+                to_attr='filtered_relations',
+            ),
+        )
 
     if not inventories:
         raise Exception('No inventories found for the selected criteria.')
@@ -148,6 +163,18 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
     for inventory in inventories:
         if inventory.id in processed_inventory_ids:
             continue
+
+        # If filtering by project, only include relations for assets in that project
+        if project_contract_id and hasattr(inventory, 'filtered_relations'):
+            # Filter the relations to only include assets that belong to the project
+            project_relations = [
+                rel for rel in inventory.filtered_relations 
+                if rel.asset in assets
+            ]
+            if not project_relations:
+                continue  # Skip this inventory if no relations match the project
+            # Set the filtered relations for PDF generation
+            inventory.filtered_relations = project_relations
 
         processed_inventory_ids.add(inventory.id)
         pdf_data = _inventory_to_pdf(inventory)
