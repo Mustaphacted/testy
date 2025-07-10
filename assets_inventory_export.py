@@ -2,14 +2,13 @@ import logging
 import zipfile
 import os
 import tempfile
+
 from datetime import date
 from django.utils.dateparse import parse_date
-from django.core.exceptions import ValidationError
 
 from django.utils import translation
 from django.db.models import QuerySet
 from django.db.models.query import Prefetch
-from django.utils.translation.trans_null import deactivate
 from logistics.models.assets import InventoryAssetRelation
 
 
@@ -20,10 +19,6 @@ from core.pdf import render_template, make_from_html
 from logistics.models.assets import Inventory, Asset
 
 logger = logging.getLogger(__name__)
-
-# Constants for export types
-EXPORT_TYPE_PERIOD = 'period'
-EXPORT_TYPE_PROJECT = 'project'
 
 
 @app.task
@@ -52,25 +47,6 @@ def export_assets_inventory(job_id: int) -> None:
 
 def _inventory_to_pdf(inventory: Inventory) -> bytes:
     locale = translation.get_language()
-    
-    # Normalize locale to match available templates
-    # Convert 'en-us' to 'en', 'fr-fr' to 'fr', etc.
-    if locale and '-' in locale:
-        locale = locale.split('-')[0]
-    
-    # Default to 'en' if locale is not set or not supported
-    if not locale or locale not in ['en', 'fr']:
-        locale = 'en'
-    
-    # Normalize locale to match available templates
-    # Convert 'en-us' to 'en', 'fr-fr' to 'fr', etc.
-    if locale and '-' in locale:
-        locale = locale.split('-')[0]
-    
-    # Default to 'en' if locale is not set or not supported
-    # Also handle test environment where locale might be None
-    if not locale or locale not in ['en', 'fr']:
-        locale = 'en'
 
     # use filtered relations if it exist
     relations = getattr(inventory, 'filtered_relations', None) or inventory.inventory_asset_relations.all()
@@ -82,6 +58,7 @@ def _inventory_to_pdf(inventory: Inventory) -> bytes:
         date=date.today(),
     )
     return make_from_html(html)
+
 
 def get_assets_by_period(date_start, date_end) -> QuerySet:
     """
@@ -152,6 +129,8 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
     processed_inventory_ids = set()
 
     asset_relations_query = InventoryAssetRelation.objects.filter(asset__in=assets)
+    if project_contract_id:
+        asset_relations_query = asset_relations_query.filter(asset__current_project_contract_id=project_contract_id)
 
     inventories = Inventory.objects.filter(
         inventory_asset_relations__asset__in=assets,
@@ -171,14 +150,6 @@ def create_zip_with_inventories(assets: QuerySet, project_contract_id=None, outp
             continue
 
         processed_inventory_ids.add(inventory.id)
-        
-        # If we're filtering by project, only include relations for assets in that project
-        if project_contract_id and hasattr(inventory, 'filtered_relations'):
-            inventory.filtered_relations = [
-                rel for rel in inventory.filtered_relations 
-                if rel.asset.current_project_contract_id == project_contract_id
-            ]
-        
         pdf_data = _inventory_to_pdf(inventory)
 
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
@@ -243,11 +214,11 @@ def export_assets_inventories(job_id: int) -> None:
        The job detail should contain:
            - type: Export type ('period' or 'project')
            - start_date/date_start: Start date for period exports
-           - end_date/date_end: End date for period exports  
+           - end_date/date_end: End date for period exports
            - current_project_contract_id: Project contract ID for project exports
            - locale: Language locale for the export (defaults to 'en')
        """
-    
+
     job = LongRunningJob.objects.get(id=job_id)
     locale = job.detail.get('locale', 'en')
     translation.activate(locale)
