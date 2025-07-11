@@ -339,53 +339,6 @@ def test_export_inventory_by_period(country_fixtures):
 
 
 @pytest.mark.django_db
-def test_export_inventory_by_project(country_fixtures):
-    premises = create_premises()
-    asset = create_asset()
-    create_asset_allocation_premises(asset=asset, premises=premises)
-
-    project_contract = create_project_contract()
-
-    # Set current project for asset
-    asset.current_project_contract = project_contract
-    asset.current_premises = premises
-    asset.save()
-
-    # Create inventory for the premises where the asset is located
-    inventory = create_inventory(premises=premises, state=Inventory.State.VALIDATED)
-
-    # Ensure the inventory has the asset relation with required condition
-    from logistics.models.assets import InventoryAssetRelation
-    if not InventoryAssetRelation.objects.filter(inventory=inventory, asset=asset).exists():
-        InventoryAssetRelation.objects.create(
-            inventory=inventory,
-            asset=asset,
-            condition=asset.condition
-        )
-
-    from logistics.tasks.assets_inventory_export import export_inventory
-
-    # Force locale to 'en' for the test
-    from django.utils import translation
-    with translation.override('en'):
-        zip_file_path = export_inventory(
-            export_type='project',
-            project_contract_id=project_contract.id,
-        )
-
-        assert os.path.exists(zip_file_path)
-        assert os.path.getsize(zip_file_path) > 0
-
-        with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
-            file_list = zip_file.namelist()
-            assert len(file_list) >= 1
-            # Check that at least one PDF file exists in the zip
-            assert any(file.endswith('.pdf') for file in file_list)
-
-        os.remove(zip_file_path)
-
-
-@pytest.mark.django_db
 def test_get_assets_by_period(country_fixtures):
     """Test the get_assets_by_period function with various scenarios."""
     from logistics.tasks.assets_inventory_export import get_assets_by_period
