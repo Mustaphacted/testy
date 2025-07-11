@@ -1,75 +1,40 @@
-import json
-import logging
 import os
+import tempfile
 import zipfile
 from datetime import date
 from unittest import mock
-from unittest.mock import Mock
 
 import pytest
-from django.test import Client
 from django.utils import translation
-from freezegun import freeze_time
-from pypdf import PdfReader
-from rest_framework import status
 
-from grants_management.tests.utils import create_project_contract
-from core.models.models import Role, LongRunningJob
+from core.models.models import LongRunningJob, Role
 from core.tests.utils import create_user
-from hr.tests.utils_staff import create_staff
-from logistics.models.assets import Asset, InventoryAssetRelation
+from grants_management.tests.utils import create_project_contract
+from logistics.models.assets import Asset, Inventory, InventoryAssetRelation
 from logistics.tasks.assets_inventory_export import (
-    export_assets_inventory, get_assets_by_period, get_assets_by_project, export_inventory
+    get_assets_by_period, get_assets_by_project, create_zip_with_inventories, 
+    export_inventory, export_assets_inventories
 )
-from logistics.tests.utils_assets import (
-    create_asset_allocation_premises, create_asset, create_inventory, create_asset_in_state_with_usage,
-)
-from security.models import PremisesRoom
+from logistics.tests.utils_assets import create_asset, create_inventory, create_asset_allocation_premises
 from security.tests.utils_premises import create_premises
 
-logger = logging.getLogger(__name__)
-
 
 @pytest.mark.django_db
-def test_export_assets_inventory():
-    """Test the export_assets_inventory function."""
-    premises = create_premises()
-    asset = create_asset()
-    create_asset_allocation_premises(asset=asset, premises=premises)
-    inventory = create_inventory(premises=premises)
-    
-    # Create a job
-    job = LongRunningJob.objects.create(
-        created_by=create_user([Role.Name.ASSETS_ADMIN]),
-        type=LongRunningJob.Type.EXPORT_ASSET_INVENTORY,
-        detail={'locale': 'en', 'inventory_code': inventory.code}
-    )
-    
-    # Test the function
-    with translation.override('en'):
-        export_assets_inventory(job.id)
-    
-    job.refresh_from_db()
-    assert job.status == LongRunningJob.Status.DONE
-    assert job.attachments.count() == 1
-
-
-@pytest.mark.django_db
-def test_get_assets_by_period():
-    """Test the get_assets_by_period function."""
+def test_get_assets_by_period(country_fixtures):
+    """Test get_assets_by_period function."""
     premises = create_premises()
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
     
     # Create inventory with end date
-    inventory = create_inventory(
-        premises=premises,
-        date_start=date(2022, 1, 1),
-        date_end=date(2022, 6, 30),
-    )
+    inventory = create_inventory(premises=premises, date_end=date(2022, 6, 30))
     
-    # Test the function
+    # Test with date objects
     assets = get_assets_by_period(date(2022, 1, 1), date(2022, 12, 31))
+    assert asset in assets
+    
+    # Test with string dates
+    assets = get_assets_by_period('2022-01-01', '2022-12-31')
     assert asset in assets
     
     # Test with no inventories in period
@@ -78,8 +43,8 @@ def test_get_assets_by_period():
 
 
 @pytest.mark.django_db
-def test_get_assets_by_project():
-    """Test the get_assets_by_project function."""
+def test_get_assets_by_project(country_fixtures):
+    """Test get_assets_by_project function."""
     project_contract = create_project_contract()
     asset = create_asset()
     
@@ -97,8 +62,36 @@ def test_get_assets_by_project():
 
 
 @pytest.mark.django_db
-def test_export_inventory():
-    """Test the export_inventory function."""
+def test_create_zip_with_inventories(country_fixtures):
+    """Test create_zip_with_inventories function."""
+    premises = create_premises()
+    asset = create_asset()
+    create_asset_allocation_premises(asset=asset, premises=premises)
+    
+    # Create inventory
+    inventory = create_inventory(premises=premises)
+    
+    # Get assets queryset
+    assets = Asset.objects.filter(id=asset.id)
+    
+    with translation.override('en'):
+        zip_path = create_zip_with_inventories(assets)
+        
+        assert os.path.exists(zip_path)
+        assert os.path.getsize(zip_path) > 0
+        
+        # Check zip contents
+        with zipfile.ZipFile(zip_path, 'r') as zip_file:
+            file_list = zip_file.namelist()
+            assert len(file_list) >= 1
+            assert any(file.endswith('.pdf') for file in file_list)
+        
+        os.remove(zip_path)
+
+
+@pytest.mark.django_db
+def test_export_inventory(country_fixtures):
+    """Test export_inventory function."""
     premises = create_premises()
     asset = create_asset()
     create_asset_allocation_premises(asset=asset, premises=premises)
@@ -106,7 +99,6 @@ def test_export_inventory():
     
     # Set current project for asset
     asset.current_project_contract = project_contract
-    asset.current_premises = premises
     asset.save()
     
     # Create inventory
@@ -133,3 +125,33 @@ def test_export_inventory():
         # Test invalid export type
         with pytest.raises(ValueError, match='Invalid export type'):
             export_inventory(export_type='invalid')
+
+
+@pytest.mark.django_db
+def test_export_assets_inventories(country_fixtures):
+    """Test export_assets_inventories celery task."""
+    premises = create_premises()
+    asset = create_asset()
+    create_asset_allocation_premises(asset=asset, premises=premises)
+    
+    # Create inventory
+    inventory = create_inventory(premises=premises, date_end=date(2022, 6, 30))
+    
+    # Create job
+    job = LongRunningJob.objects.create(
+        created_by=create_user([Role.Name.ASSETS_ADMIN]),
+        type=LongRunningJob.Type.EXPORT_ASSET_INVENTORY,
+        detail={
+            'type': 'period',
+            'start_date': '2022-01-01',
+            'end_date': '2022-12-31',
+            'locale': 'en'
+        }
+    )
+    
+    # Test the task
+    export_assets_inventories(job.id)
+    
+    job.refresh_from_db()
+    assert job.status == LongRunningJob.Status.DONE
+    assert job.attachments.count() == 1
